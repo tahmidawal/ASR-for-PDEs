@@ -1,0 +1,68 @@
+# Nano U-Net Deep Configuration: ~35-45K parameters
+#
+# Slightly deeper variant of Nano U-Net
+# 3 conv blocks per level instead of 2
+# Tests if extra depth helps at low parameter counts
+#
+# Architecture: 2-level U-Net with 3 conv blocks per level
+
+train_dataset:
+  dataset:
+    name: poisson1d-synthetic
+    args:
+      num_samples: 10000
+      resolution: 256
+      freq_range: [1, 20]
+      use_superposition: true
+      num_components: 5
+      use_float64: true
+      normalize_solution: true
+      seed: 42
+  batch_size: 32
+
+val_dataset:
+  dataset:
+    name: poisson1d-synthetic
+    args:
+      num_samples: 2000
+      resolution: 256
+      freq_range: [1, 20]
+      use_superposition: true
+      num_components: 5
+      use_float64: true
+      normalize_solution: true
+      seed: 12345
+  batch_size: 32
+
+model:
+  name: unet-nano-deep
+  args:
+    base_channels: 10      # Slightly smaller base to compensate for depth
+    kernel_size: 5
+    padding_mode: reflect
+    activation: relu
+
+optimizer:
+  name: adam
+  args:
+    lr: 5.0e-4
+    betas: [0.9, 0.999]
+    weight_decay: 0
+
+epoch_max: 500
+epoch_val: 1
+early_stopping_patience: 50
+
+reduce_lr_on_plateau:
+  mode: min
+  factor: 0.5
+  patience: 25
+  threshold: 1.0e-7
+  min_lr: 1.0e-9
+  cooldown: 5
+  verbose: true
+
+grad_clip: 0.5
+use_double_precision: true
+
+

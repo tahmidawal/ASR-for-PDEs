@@ -16,7 +16,7 @@ train_dataset:
       use_superposition: true
       num_components: 5
       use_float64: true
-      normalize_solution: true
+      normalize_solution: false
       seed: 42
   batch_size: 32
 
@@ -30,7 +30,7 @@ val_dataset:
       use_superposition: true
       num_components: 5
       use_float64: true
-      normalize_solution: true
+      normalize_solution: false
       seed: 12345
   batch_size: 32
 
@@ -64,5 +64,6 @@ reduce_lr_on_plateau:
 
 grad_clip: 0.5
 use_double_precision: true
+loss_type: l2  # Use L2 loss instead of MSE
 
 

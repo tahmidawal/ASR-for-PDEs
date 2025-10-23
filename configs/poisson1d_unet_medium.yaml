@@ -1,10 +1,10 @@
-# Dense Net (MLP) Configuration: ~5-10K parameters
+# UNet Medium Configuration: ~100-150K parameters
 #
-# Tests if a simple fully-connected network can solve 1D Poisson
-# Hypothesis: Since the problem is smooth, explicit spatial structure 
-# (convolutions) might not be necessary
+# Medium-sized 3-level U-Net with multi-scale processing
+# Architecture: 256 → 128 → 64 → 128 → 256 with skip connections
+# Features: 3 conv blocks per level, GELU activation
+# Expected performance: 0.05-0.2% relative L2 error
 #
-# Architecture: 256 -> 128 -> 256 -> 512 -> 256
 
 train_dataset:
   dataset:
@@ -35,33 +35,35 @@ val_dataset:
   batch_size: 32
 
 model:
-  name: mlp-dense
+  name: unet-medium
   args:
-    input_size: 256
-    hidden_dims: [128, 256, 512, 256]  # Gradually expand then contract
-    activation: relu
+    base_channels: 32
+    num_levels: 3
+    kernel_size: 7
+    blocks_per_level: 3
+    padding_mode: reflect
+    activation: gelu
 
 optimizer:
   name: adam
   args:
-    lr: 5.0e-4
+    lr: 8.0e-4
     betas: [0.9, 0.999]
-    weight_decay: 0
+    weight_decay: 1.0e-6
 
 epoch_max: 1000
 epoch_val: 1
-early_stopping_patience: 100
+early_stopping_patience: 75
 
 reduce_lr_on_plateau:
   mode: min
   factor: 0.5
-  patience: 25
-  threshold: 1.0e-7
-  min_lr: 1.0e-9
+  patience: 20
+  threshold: 1.0e-9
+  min_lr: 1.0e-8
   cooldown: 5
   verbose: true
 
-grad_clip: 0.5
+grad_clip: 1.0
 use_double_precision: true
 loss_type: l2  # Use L2 loss instead of MSE
-

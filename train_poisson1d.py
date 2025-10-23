@@ -1,12 +1,20 @@
 """
-Training script for lightweight 1D Poisson models
+Training script for 1D Poisson models
 
-Tests ultra-lightweight architectures:
+Supports various architectures:
 - Dense Net (MLP): ~5-10K params
 - Micro CNN: ~10-15K params
 - Nano U-Net: ~20-30K params
+- Better CNN: ~80-100K params (with residual connections)
+- UNet Medium: ~100-150K params (3-level U-Net)
+- FNO-1D: ~50-80K params (Fourier Neural Operator)
+- FNO-1D Advanced: ~120-150K params (enhanced FNO)
 
-Uses MSE (L2 norm) loss with comprehensive metrics tracking.
+Supports configurable loss functions:
+- 'mse': Standard MSE (L2 norm) loss [default]
+- 'relative_mse': Relative MSE loss (scale-invariant)
+
+Uses comprehensive metrics tracking: MSE, MAE, L_inf, Relative L2.
 """
 
 import argparse
@@ -26,6 +34,38 @@ import numpy as np
 import datasets
 import models
 import utils
+
+
+def l2_loss(pred, target):
+    """
+    Compute L2 loss: sqrt(sum((pred - target)^2))
+
+    Args:
+        pred: (B, 1, N) predicted solution
+        target: (B, 1, N) ground truth solution
+
+    Returns:
+        scalar loss value
+    """
+    return torch.sqrt(torch.sum((pred - target) ** 2))
+
+def relative_mse_loss(pred, target, eps=1e-10):
+    """
+    Compute relative MSE loss: mean(((pred - target) / |target|)^2)
+
+    This loss is scale-invariant and focuses on relative errors,
+    which is useful when solution magnitudes vary across samples.
+
+    Args:
+        pred: (B, 1, N) predicted solution
+        target: (B, 1, N) ground truth solution
+        eps: small constant to avoid division by zero
+
+    Returns:
+        scalar loss value
+    """
+    relative_error = (pred - target) / (torch.abs(target) + eps)
+    return torch.mean(relative_error ** 2)
 
 
 def make_data_loader(spec, tag=''):
@@ -72,6 +112,11 @@ def prepare_training():
         lr_scheduler = ReduceLROnPlateau(optimizer, **config['reduce_lr_on_plateau'])
 
     log('model: #params={}'.format(utils.compute_num_params(model, text=True)))
+
+    # Log loss type
+    loss_type = config.get('loss_type', 'mse')
+    log('loss function: {}'.format(loss_type))
+
     return model, optimizer, epoch_start, lr_scheduler
 
 
@@ -89,22 +134,22 @@ def compute_metrics(pred, target):
     # MSE
     mse = F.mse_loss(pred, target).item()
 
-    # L_inf (max absolute error)
-    l_inf = torch.max(torch.abs(pred - target)).item()
+    # L2 loss (raw)
+    l2_loss_val = torch.sqrt(torch.sum((pred - target) ** 2)).item()
 
     # Relative L2 error
-    l2_error = torch.sqrt(torch.sum((pred - target) ** 2))
     l2_norm = torch.sqrt(torch.sum(target ** 2))
-    relative_l2 = (l2_error / (l2_norm + 1e-10)).item()
+    relative_l2 = (l2_loss_val / (l2_norm + 1e-10)).item()
 
-    # MAE
-    mae = F.l1_loss(pred, target).item()
+    # Relative MSE
+    relative_error = (pred - target) / (torch.abs(target) + 1e-10)
+    relative_mse = torch.mean(relative_error ** 2).item()
 
     return {
         'mse': mse,
-        'mae': mae,
-        'l_inf': l_inf,
-        'relative_l2': relative_l2
+        'l2': l2_loss_val,
+        'relative_l2': relative_l2,
+        'relative_mse': relative_mse
     }
 
 
@@ -116,9 +161,9 @@ def train(train_loader, model, optimizer):
 
     metrics_acc = {
         'mse': utils.Averager(),
-        'mae': utils.Averager(),
-        'l_inf': utils.Averager(),
-        'relative_l2': utils.Averager()
+        'l2': utils.Averager(),
+        'relative_l2': utils.Averager(),
+        'relative_mse': utils.Averager()
     }
 
     for batch in tqdm(train_loader, leave=False, desc='train'):
@@ -131,11 +176,21 @@ def train(train_loader, model, optimizer):
         # Forward pass
         pred = model(source)
 
-        # Compute loss
+        # Compute loss (support both MSE and relative MSE)
+        loss_type = config.get('loss_type', 'l2')
         if use_double:
-            loss = F.mse_loss(pred.double(), target.double())
+            pred_loss = pred.double()
+            target_loss = target.double()
         else:
-            loss = F.mse_loss(pred, target)
+            pred_loss = pred
+            target_loss = target
+
+        if loss_type == 'relative_mse':
+            loss = relative_mse_loss(pred_loss, target_loss)
+        elif loss_type == 'l2':
+            loss = l2_loss(pred_loss, target_loss)
+        else:  # default: 'mse'
+            loss = F.mse_loss(pred_loss, target_loss)
 
         # Backward
         optimizer.zero_grad()
@@ -163,9 +218,9 @@ def evaluate(val_loader, model):
 
     metrics_acc = {
         'mse': utils.Averager(),
-        'mae': utils.Averager(),
-        'l_inf': utils.Averager(),
-        'relative_l2': utils.Averager()
+        'l2': utils.Averager(),
+        'relative_l2': utils.Averager(),
+        'relative_mse': utils.Averager()
     }
 
     with torch.no_grad():
@@ -205,15 +260,15 @@ def plot_metrics(metrics_history, save_path):
     ax.grid(True, alpha=0.3)
     ax.legend()
 
-    # L_inf error (log scale)
+    # L2 Loss (log scale)
     ax = axes[0, 1]
-    ax.plot(epochs, metrics_history['train_l_inf'], 'b-', linewidth=2, label='Train')
-    if metrics_history['val_l_inf']:
-        val_epochs = [e for e in epochs if e <= len(metrics_history['val_l_inf'])]
-        ax.plot(val_epochs, metrics_history['val_l_inf'][:len(val_epochs)], 'r-', linewidth=2, label='Val')
+    ax.plot(epochs, metrics_history['train_l2'], 'b-', linewidth=2, label='Train')
+    if metrics_history['val_l2']:
+        val_epochs = [e for e in epochs if e <= len(metrics_history['val_l2'])]
+        ax.plot(val_epochs, metrics_history['val_l2'][:len(val_epochs)], 'r-', linewidth=2, label='Val')
     ax.set_xlabel('Epoch')
-    ax.set_ylabel('L_inf Error')
-    ax.set_title('Maximum Absolute Error (log scale)')
+    ax.set_ylabel('L2')
+    ax.set_title('L2 Loss (log scale)')
     ax.set_yscale('log')
     ax.grid(True, alpha=0.3)
     ax.legend()
@@ -272,13 +327,13 @@ def main(config_, save_path):
     # Metrics history
     metrics_history = {
         'train_mse': [],
-        'train_mae': [],
-        'train_l_inf': [],
+        'train_l2': [],
         'train_relative_l2': [],
+        'train_relative_mse': [],
         'val_mse': [],
-        'val_mae': [],
-        'val_l_inf': [],
+        'val_l2': [],
         'val_relative_l2': [],
+        'val_relative_mse': [],
         'lr': [],
         'best_val_mse': best_val_mse,
         'best_epoch': best_epoch
@@ -301,15 +356,14 @@ def main(config_, save_path):
         for k, v in train_metrics.items():
             metrics_history['train_{}'.format(k)].append(v)
 
-        log_info.append('train: mse={:.2e}, mae={:.2e}, l_inf={:.2e}, rel_l2={:.2e}'.format(
+        log_info.append('train: mse={:.2e}, l2={:.2e}, rel_l2={:.2e}, rel_mse={:.2e}'.format(
             train_metrics['mse'],
-            train_metrics['mae'],
-            train_metrics['l_inf'],
-            train_metrics['relative_l2']
+            train_metrics['l2'],
+            train_metrics['relative_l2'],
+            train_metrics['relative_mse']
         ))
 
         writer.add_scalars('mse', {'train': train_metrics['mse']}, epoch)
-        writer.add_scalars('l_inf', {'train': train_metrics['l_inf']}, epoch)
 
         # Prepare checkpoint
         model_spec = config['model']
@@ -332,15 +386,14 @@ def main(config_, save_path):
             for k, v in val_metrics.items():
                 metrics_history['val_{}'.format(k)].append(v)
 
-            log_info.append('val: mse={:.2e}, mae={:.2e}, l_inf={:.2e}, rel_l2={:.2e}'.format(
+            log_info.append('val: mse={:.2e}, l2={:.2e}, rel_l2={:.2e}, rel_mse={:.2e}'.format(
                 val_metrics['mse'],
-                val_metrics['mae'],
-                val_metrics['l_inf'],
-                val_metrics['relative_l2']
+                val_metrics['l2'],
+                val_metrics['relative_l2'],
+                val_metrics['relative_mse']
             ))
 
             writer.add_scalars('mse', {'train': train_metrics['mse'], 'val': val_metrics['mse']}, epoch)
-            writer.add_scalars('l_inf', {'train': train_metrics['l_inf'], 'val': val_metrics['l_inf']}, epoch)
 
             # Check for improvement
             if val_metrics['mse'] < best_val_mse:

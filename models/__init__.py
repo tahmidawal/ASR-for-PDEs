@@ -21,6 +21,6 @@ def make(spec, args=None):
 
 
 # Import model classes to register them
-from . import lightweight_models
+from . import models
 
 

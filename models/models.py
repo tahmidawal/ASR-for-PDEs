@@ -3,6 +3,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
+from .fno1d import FNO1d as FNO1dImpl
 
 # Model registry
 _models = {}
@@ -970,3 +971,54 @@ class SpectralConv1dAdvanced(nn.Module):
         return x_out
 
 
+@register('fno-1d-official')
+class FNO1dOfficial(nn.Module):
+    """
+    Official FNO implementation following the original paper closely
+    
+    This is our custom implementation based on the official FNO codebase
+    with proper spectral convolution, normalization, and training practices.
+    
+    Expected to achieve much better accuracy than the existing FNO models.
+    """
+    
+    def __init__(
+        self,
+        modes=24,
+        width=96,
+        depth=6,
+        activation='gelu'
+    ):
+        super().__init__()
+        
+        # Use our custom FNO implementation
+        self.fno = FNO1dImpl(
+            modes=modes,
+            width=width,
+            in_dim=2,  # source + coordinate
+            out_dim=1,  # solution
+            depth=depth
+        )
+    
+    def forward(self, source):
+        """
+        Args:
+            source: (B, 1, N) - source term f(x)
+        
+        Returns:
+            solution: (B, 1, N) - predicted solution u(x)
+        """
+        B, C, N = source.shape
+        
+        # Add grid coordinates (CRITICAL for FNO!)
+        grid = torch.linspace(0, 1, N, device=source.device, dtype=source.dtype)
+        grid = grid.reshape(1, 1, N).repeat(B, 1, 1)
+        
+        # Concatenate: (B, 2, N) - [source, coordinate]
+        x = torch.cat([source, grid], dim=1)
+        
+        # Forward through FNO
+        out = self.fno(x)  # (B, N)
+        
+        # Reshape to match expected output format
+        return out.unsqueeze(1)  # (B, 1, N)

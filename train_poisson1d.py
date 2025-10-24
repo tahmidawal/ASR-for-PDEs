@@ -1,21 +1,4 @@
-"""
-Training script for 1D Poisson models
 
-Supports various architectures:
-- Dense Net (MLP): ~5-10K params
-- Micro CNN: ~10-15K params
-- Nano U-Net: ~20-30K params
-- Better CNN: ~80-100K params (with residual connections)
-- UNet Medium: ~100-150K params (3-level U-Net)
-- FNO-1D: ~50-80K params (Fourier Neural Operator)
-- FNO-1D Advanced: ~120-150K params (enhanced FNO)
-
-Supports configurable loss functions:
-- 'mse': Standard MSE (L2 norm) loss [default]
-- 'relative_mse': Relative MSE loss (scale-invariant)
-
-Uses comprehensive metrics tracking: MSE, MAE, L_inf, Relative L2.
-"""
 
 import argparse
 import os
@@ -137,9 +120,11 @@ def compute_metrics(pred, target):
     # L2 loss (raw)
     l2_loss_val = torch.sqrt(torch.sum((pred - target) ** 2)).item()
 
-    # Relative L2 error
-    l2_norm = torch.sqrt(torch.sum(target ** 2))
-    relative_l2 = (l2_loss_val / (l2_norm + 1e-10)).item()
+    # Relative L2 error (batch-wise, as used in FNO paper)
+    from models.fno1d import LpLoss
+    criterion = LpLoss(d=1, p=2)
+    relative_l2 = criterion.rel(pred.reshape(pred.shape[0], -1), 
+                               target.reshape(target.shape[0], -1)).item()
 
     # Relative MSE
     relative_error = (pred - target) / (torch.abs(target) + 1e-10)
@@ -176,7 +161,7 @@ def train(train_loader, model, optimizer):
         # Forward pass
         pred = model(source)
 
-        # Compute loss (support both MSE and relative MSE)
+        # Compute loss (support MSE, L2, relative MSE, and relative L2)
         loss_type = config.get('loss_type', 'l2')
         if use_double:
             pred_loss = pred.double()
@@ -187,6 +172,12 @@ def train(train_loader, model, optimizer):
 
         if loss_type == 'relative_mse':
             loss = relative_mse_loss(pred_loss, target_loss)
+        elif loss_type == 'relative_l2':
+            # Relative L2 loss (scale-invariant, used in FNO paper)
+            from models.fno1d import LpLoss
+            criterion = LpLoss(d=1, p=2)
+            loss = criterion.rel(pred_loss.reshape(pred_loss.shape[0], -1), 
+                               target_loss.reshape(target_loss.shape[0], -1))
         elif loss_type == 'l2':
             loss = l2_loss(pred_loss, target_loss)
         else:  # default: 'mse'
@@ -437,6 +428,7 @@ def main(config_, save_path):
     # Final plot
     plot_metrics(metrics_history, save_path)
     log('Training completed! Best Val MSE: {:.2e} at epoch {}'.format(best_val_mse, best_epoch))
+
 
 
 if __name__ == '__main__':

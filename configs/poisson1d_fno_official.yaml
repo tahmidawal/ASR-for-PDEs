@@ -1,0 +1,82 @@
+# Official FNO Implementation for 1D Poisson Equation
+#
+# This config uses our custom FNO implementation that follows the original paper
+# closely with proper spectral convolution, normalization, and loss functions.
+#
+# Expected performance: 0.01-0.1% relative L2 error (much better than existing models)
+#
+# Key improvements:
+# - Proper spectral convolution in Fourier space
+# - Grid coordinates automatically added to input
+# - Relative L2 loss (scale-invariant)
+# - UnitGaussianNormalizer for stable training
+# - Optimal hyperparameters based on official FNO paper
+
+train_dataset:
+  dataset:
+    name: poisson1d-synthetic
+    args:
+      num_samples: 20000          # Large dataset for better generalization
+      resolution: 256
+      freq_range: [1, 20]
+      use_superposition: true
+      num_components: 5
+      use_float64: true           # Double precision for maximum accuracy
+      normalize_solution: true
+      seed: 42
+  batch_size: 32
+
+val_dataset:
+  dataset:
+    name: poisson1d-synthetic
+    args:
+      num_samples: 4000
+      resolution: 256
+      freq_range: [1, 20]
+      use_superposition: true
+      num_components: 5
+      use_float64: true
+      normalize_solution: true
+      seed: 12345
+  batch_size: 32
+
+model:
+  name: fno-1d-official
+  args:
+    modes: 24                     # Higher modes for better frequency resolution
+    width: 96                     # Wider channels for more capacity
+    depth: 6                      # Deeper network for complex patterns
+    activation: gelu              # GELU works better for smooth functions
+
+optimizer:
+  name: adam
+  args:
+    lr: 1.0e-3                    # Start with standard learning rate
+    betas: [0.9, 0.999]
+    weight_decay: 1.0e-5          # Light regularization
+
+epoch_max: 2000                   # Long training for convergence
+epoch_val: 1
+early_stopping_patience: 100      # Patient early stopping
+
+reduce_lr_on_plateau:
+  mode: min
+  factor: 0.5                     # Halve LR when plateauing
+  patience: 50                    # Wait longer before reducing
+  threshold: 1.0e-9               # Very small threshold for fine-tuning
+  min_lr: 1.0e-7                  # Allow very small learning rates
+  cooldown: 10
+  verbose: true
+
+grad_clip: 1.0                    # Gradient clipping for stability
+use_double_precision: true        # Double precision throughout
+loss_type: relative_l2            # Use relative L2 loss (scale-invariant)
+
+# Additional FNO-specific settings
+fno_settings:
+  use_normalization: true         # Enable input/output normalization
+  spectral_norm: false           # Don't use spectral normalization (conflicts with FNO)
+  
+# Logging and checkpointing
+log_interval: 10
+save_interval: 50

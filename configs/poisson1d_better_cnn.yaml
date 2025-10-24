@@ -30,7 +30,7 @@ val_dataset:
       use_superposition: true
       num_components: 5
       use_float64: true
-      normalize_solution: false
+      normalize_solution: true
       seed: 12345
   batch_size: 32
 
